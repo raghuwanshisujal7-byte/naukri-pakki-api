@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 
-router = APIRouter()
+router = APIRouter(prefix="/analyze", tags=["Analyze"])
 
-@router.get("/analyze")
-def analyze():
-    return {"message": "Analyze route working"}
+@router.get("/")
+def analyze_test():
+    return {"message": "Analyze route is working"}
