@@ -2,13 +2,11 @@ from fastapi import APIRouter, UploadFile, File
 from fastapi.responses import JSONResponse
 import pdfplumber
 import google.generativeai as genai
-import os
-import json
-import uuid
-import time
+import os, json, uuid, time
 
 router = APIRouter(prefix="/analyze", tags=["Analyze"])
 
+# Gemini config
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 def call_gemini(prompt: str):
@@ -16,76 +14,81 @@ def call_gemini(prompt: str):
     return model.generate_content(
         prompt,
         generation_config={
-            "temperature": 0.9,
-            "max_output_tokens": 700
+            "temperature": 0.9,          # 🔥 IMPORTANT (variation)
+            "max_output_tokens": 600     # 🔥 SPEED CONTROL
         }
     )
 
 @router.post("/")
 async def analyze_resume(resume: UploadFile = File(...)):
     try:
-        # 1️⃣ Read PDF (FAST)
+        # 1️⃣ Read PDF (limit pages + chars)
         text = ""
         with pdfplumber.open(resume.file) as pdf:
-            for page in pdf.pages[:2]:
+            for page in pdf.pages[:3]:
                 t = page.extract_text()
                 if t:
                     text += t + "\n"
 
-        if len(text) < 200:
+        text = text.strip()[:4000]  # 🔥 VERY IMPORTANT
+
+        if len(text) < 150:
             return JSONResponse(
                 status_code=400,
                 content={"status": "ERROR", "message": "Resume content too short"}
             )
 
+        # 2️⃣ UNIQUE PROMPT (resume-dependent)
         prompt = f"""
 You are an ATS resume analyzer.
 
-Return ONLY valid JSON:
+IMPORTANT RULES:
+- Different resumes MUST give different ATS scores
+- Score must depend strictly on resume content
+- Penalize missing skills, missing numbers, weak keywords
+- Do NOT repeat generic answers
+
+Scoring logic:
+- Start at 100
+- Minus points for:
+  - No quantified achievements
+  - Missing role-specific keywords
+  - Poor formatting
+  - Generic content
+
+Return ONLY valid JSON in this format (no markdown):
+
 {{
-  "ats_score": number,
+  "ats_score": number (0-100),
   "summary": string,
   "strengths": [string],
   "weaknesses": [string],
   "missing_skills": [string]
 }}
 
-Give different analysis every time.
-
-Resume:
-{text[:2500]}
+Resume text:
+{text}
 """
 
-        # 2️⃣ RETRY LOGIC (IMPORTANT)
-        for attempt in range(2):
-            try:
-                response = call_gemini(prompt)
-                raw = response.text.strip()
-                raw = raw.replace("```json", "").replace("```", "").strip()
-                data = json.loads(raw)
+        response = call_gemini(prompt)
 
-                return {
-                    "status": "OK",
-                    "file_id": str(uuid.uuid4()),
-                    "ats_score": data["ats_score"],
-                    "summary": data["summary"],
-                    "strengths": data["strengths"],
-                    "weaknesses": data["weaknesses"],
-                    "missing_skills": data["missing_skills"]
-                }
+        raw = response.text.strip()
+        raw = raw.replace("```json", "").replace("```", "").strip()
 
-            except Exception:
-                time.sleep(2)
+        result = json.loads(raw)
 
-        # 3️⃣ FALLBACK (NEVER FAIL)
+        # 3️⃣ Safety guard (avoid stuck values)
+        score = int(result.get("ats_score", 50))
+        score = max(35, min(score, 90))
+
         return {
             "status": "OK",
             "file_id": str(uuid.uuid4()),
-            "ats_score": 65,
-            "summary": "Resume analyzed. Improve ATS keywords and quantified results.",
-            "strengths": ["Readable format", "Basic skills included"],
-            "weaknesses": ["Lack of metrics", "ATS keywords missing"],
-            "missing_skills": ["Role-specific tools", "Industry keywords"]
+            "ats_score": score,
+            "summary": result.get("summary", ""),
+            "strengths": result.get("strengths", []),
+            "weaknesses": result.get("weaknesses", []),
+            "missing_skills": result.get("missing_skills", [])
         }
 
     except Exception as e:
