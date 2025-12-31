@@ -1,73 +1,39 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File
 from fastapi.responses import JSONResponse
-import pdfplumber
-import google.generativeai as genai
 import os
+import shutil
+import uuid
 
 router = APIRouter(
     prefix="/analyze",
     tags=["Analyze"]
 )
 
-# Gemini setup
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+UPLOAD_DIR = "uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-if not GEMINI_API_KEY:
-    raise RuntimeError("GEMINI_API_KEY not set")
-
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-pro")
-
-
+# ✅ Test route
 @router.get("/")
 def analyze_test():
     return {"message": "Analyze route is working"}
 
-
+# ✅ SAFE UPLOAD ONLY (NO AI CALL)
 @router.post("/")
 async def analyze_resume(resume: UploadFile = File(...)):
     try:
-        # 1. Read PDF text
-        text = ""
-        with pdfplumber.open(resume.file) as pdf:
-            for page in pdf.pages:
-                page_text = page.extract_text()
-                if page_text:
-                    text += page_text + "\n"
+        file_id = f"{uuid.uuid4()}_{resume.filename}"
+        file_path = os.path.join(UPLOAD_DIR, file_id)
 
-        if not text.strip():
-            raise HTTPException(status_code=400, detail="PDF has no readable text")
-
-        # 2. Prompt
-        prompt = f"""
-You are an ATS resume analyzer.
-
-Return ONLY valid JSON in this exact format:
-{{
-  "ats_score": 0-100,
-  "strengths": [],
-  "weaknesses": [],
-  "missing_skills": [],
-  "summary": ""
-}}
-
-Resume text:
-{text}
-"""
-
-        # 3. Gemini call
-        response = model.generate_content(prompt)
-
-        # 4. SAFE response extract
-        if not response or not response.candidates:
-            raise Exception("Empty response from Gemini")
-
-        result_text = response.candidates[0].content.parts[0].text
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(resume.file, buffer)
 
         return JSONResponse(
+            status_code=200,
             content={
                 "status": "OK",
-                "analysis": result_text
+                "message": "Resume uploaded successfully",
+                "file_id": file_id,
+                "next_step": "AI analysis coming soon"
             }
         )
 
