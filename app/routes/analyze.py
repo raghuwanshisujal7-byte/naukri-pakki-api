@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse
 import pdfplumber
 import google.generativeai as genai
 import os
+import json
 
 router = APIRouter(
     prefix="/analyze",
@@ -16,43 +17,64 @@ model = genai.GenerativeModel("gemini-pro")
 @router.post("/")
 async def analyze_resume(resume: UploadFile = File(...)):
     try:
-        # 1. Read PDF
+        # 1️⃣ Read PDF safely
         text = ""
         with pdfplumber.open(resume.file) as pdf:
-            for page in pdf.pages:
-                text += page.extract_text() or ""
+            for page in pdf.pages[:3]:   # LIMIT pages (IMPORTANT)
+                page_text = page.extract_text()
+                if page_text:
+                    text += page_text + "\n"
 
         if len(text.strip()) < 100:
             return JSONResponse(
                 status_code=400,
-                content={"error": "Resume text too short or unreadable"}
+                content={"status": "ERROR", "message": "Resume text too short"}
             )
 
-        # 2. AI Prompt
+        # 2️⃣ STRICT PROMPT (JSON ONLY)
         prompt = f"""
-        Analyze the following resume and return:
-        1. ATS Score out of 100
-        2. Top 5 strengths
-        3. Top 5 weaknesses
-        4. Missing skills
-        5. One-line improvement advice
+You are an ATS resume analyzer.
 
-        Resume:
-        {text}
-        """
+Return ONLY valid JSON in this format:
 
-        # 3. Gemini Call
+{{
+  "ats_score": number between 0-100,
+  "summary": string,
+  "strengths": [string],
+  "weaknesses": [string],
+  "missing_skills": [string]
+}}
+
+Resume text:
+{text}
+"""
+
         response = model.generate_content(prompt)
 
-        # 4. Return result
+        # 3️⃣ Parse JSON safely
+        raw = response.text.strip()
+
+        # Remove markdown if Gemini adds it
+        raw = raw.replace("```json", "").replace("```", "").strip()
+
+        result = json.loads(raw)
+
+        # 4️⃣ FINAL RESPONSE
         return {
             "status": "OK",
-            "ats_score": "Parsed by AI",
-            "analysis": response.text
+            "ats_score": result["ats_score"],
+            "summary": result["summary"],
+            "strengths": result["strengths"],
+            "weaknesses": result["weaknesses"],
+            "missing_skills": result["missing_skills"]
         }
 
     except Exception as e:
         return JSONResponse(
             status_code=500,
-            content={"error": str(e)}
+            content={
+                "status": "ERROR",
+                "message": str(e)
+            }
         )
+
