@@ -2,12 +2,20 @@ from fastapi import APIRouter, UploadFile, File
 from fastapi.responses import JSONResponse
 import pdfplumber
 import os
-import openai
+import google.generativeai as genai
 
 router = APIRouter(
     prefix="/analyze",
     tags=["Analyze"]
 )
+
+# -------------------------
+# CONFIG
+# -------------------------
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
 
 # -------------------------
 # TEST ROUTE
@@ -17,47 +25,58 @@ def analyze_test():
     return {"message": "Analyze route is working"}
 
 # -------------------------
-# ANALYZE RESUME (PHASE 3)
+# ANALYZE RESUME (POST)
 # -------------------------
 @router.post("/")
 async def analyze_resume(resume: UploadFile = File(...)):
-    if resume.content_type != "application/pdf":
+    try:
+        # 1️⃣ Extract text from PDF
+        resume_text = ""
+        with pdfplumber.open(resume.file) as pdf:
+            for page in pdf.pages:
+                text = page.extract_text()
+                if text:
+                    resume_text += text + "\n"
+
+        if not resume_text.strip():
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Could not extract text from PDF"}
+            )
+
+        # 2️⃣ Gemini Prompt
+        prompt = f"""
+You are an ATS resume analyzer.
+
+Analyze the following resume and return STRICT JSON only in this format:
+
+{{
+  "ats_score": number between 0-100,
+  "strengths": [list of strengths],
+  "weaknesses": [list of weaknesses],
+  "missing_skills": [list of missing skills],
+  "summary": "short improvement summary"
+}}
+
+Resume Text:
+{resume_text}
+"""
+
+        model = genai.GenerativeModel("gemini-pro")
+        response = model.generate_content(prompt)
+
+        analysis_text = response.text.strip()
+
+        # 3️⃣ Return raw AI response (Phase 2)
         return JSONResponse(
-            status_code=400,
-            content={"error": "Only PDF files are allowed"}
+            content={
+                "message": "Resume analyzed successfully",
+                "analysis_raw": analysis_text
+            }
         )
 
-    # Save temp file
-    file_path = f"/tmp/{resume.filename}"
-    with open(file_path, "wb") as f:
-        f.write(await resume.read())
-
-    # Extract text from PDF
-    text = ""
-    with pdfplumber.open(file_path) as pdf:
-        for page in pdf.pages:
-            text += page.extract_text() + "\n"
-
-    os.remove(file_path)
-
-    # -------- MOCK AI ANALYSIS (next step real AI) --------
-    analysis = {
-        "ats_score": 62,
-        "strengths": [
-            "Clear project descriptions",
-            "Relevant technical skills"
-        ],
-        "weaknesses": [
-            "Missing quantified achievements",
-            "No summary section"
-        ],
-        "missing_skills": [
-            "System Design",
-            "Cloud Basics"
-        ]
-    }
-
-    return {
-        "message": "Resume analyzed successfully",
-        "analysis": analysis
-    }
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)}
+        )
