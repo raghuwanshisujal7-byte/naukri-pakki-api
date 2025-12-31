@@ -1,47 +1,58 @@
 from fastapi import APIRouter, UploadFile, File
 from fastapi.responses import JSONResponse
+import pdfplumber
+import google.generativeai as genai
 import os
-import shutil
-import uuid
 
 router = APIRouter(
     prefix="/analyze",
     tags=["Analyze"]
 )
 
-UPLOAD_DIR = "uploads"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+# Gemini setup
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+model = genai.GenerativeModel("gemini-pro")
 
-# ✅ Test route
-@router.get("/")
-def analyze_test():
-    return {"message": "Analyze route is working"}
-
-# ✅ SAFE UPLOAD ONLY (NO AI CALL)
 @router.post("/")
 async def analyze_resume(resume: UploadFile = File(...)):
     try:
-        file_id = f"{uuid.uuid4()}_{resume.filename}"
-        file_path = os.path.join(UPLOAD_DIR, file_id)
+        # 1. Read PDF
+        text = ""
+        with pdfplumber.open(resume.file) as pdf:
+            for page in pdf.pages:
+                text += page.extract_text() or ""
 
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(resume.file, buffer)
+        if len(text.strip()) < 100:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Resume text too short or unreadable"}
+            )
 
-        return JSONResponse(
-            status_code=200,
-            content={
-                "status": "OK",
-                "message": "Resume uploaded successfully",
-                "file_id": file_id,
-                "next_step": "AI analysis coming soon"
-            }
-        )
+        # 2. AI Prompt
+        prompt = f"""
+        Analyze the following resume and return:
+        1. ATS Score out of 100
+        2. Top 5 strengths
+        3. Top 5 weaknesses
+        4. Missing skills
+        5. One-line improvement advice
+
+        Resume:
+        {text}
+        """
+
+        # 3. Gemini Call
+        response = model.generate_content(prompt)
+
+        # 4. Return result
+        return {
+            "status": "OK",
+            "ats_score": "Parsed by AI",
+            "analysis": response.text
+        }
 
     except Exception as e:
         return JSONResponse(
             status_code=500,
-            content={
-                "status": "ERROR",
-                "message": str(e)
-            }
+            content={"error": str(e)}
         )
