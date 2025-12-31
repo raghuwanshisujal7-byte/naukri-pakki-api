@@ -5,3 +5,4 @@ pdfplumber
 python-docx
 pypdf
 google-generativeai
+openai
