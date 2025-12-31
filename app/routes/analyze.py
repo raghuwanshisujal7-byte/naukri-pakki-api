@@ -1,71 +1,81 @@
-from fastapi import APIRouter, UploadFile, File
+from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
 import pdfplumber
 import google.generativeai as genai
 import os
-import json
 
 router = APIRouter(
     prefix="/analyze",
     tags=["Analyze"]
 )
 
-# Gemini config
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-model = genai.GenerativeModel("gemini-1.5-flash")
+# Gemini setup
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+if not GEMINI_API_KEY:
+    raise RuntimeError("GEMINI_API_KEY not set")
+
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel("gemini-pro")
+
 
 @router.get("/")
 def analyze_test():
     return {"message": "Analyze route is working"}
 
+
 @router.post("/")
 async def analyze_resume(resume: UploadFile = File(...)):
-    # 1. Extract text from PDF
-    text = ""
-    with pdfplumber.open(resume.file) as pdf:
-        for page in pdf.pages:
-            if page.extract_text():
-                text += page.extract_text()
+    try:
+        # 1. Read PDF text
+        text = ""
+        with pdfplumber.open(resume.file) as pdf:
+            for page in pdf.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    text += page_text + "\n"
 
-    # 2. Prompt Gemini (STRICT JSON)
-    prompt = f"""
+        if not text.strip():
+            raise HTTPException(status_code=400, detail="PDF has no readable text")
+
+        # 2. Prompt
+        prompt = f"""
 You are an ATS resume analyzer.
 
-Analyze the resume text below and respond ONLY in valid JSON.
-
-JSON format:
+Return ONLY valid JSON in this exact format:
 {{
-  "ats_score": number (0-100),
-  "strengths": [string, string],
-  "weaknesses": [string, string],
-  "missing_skills": [string, string],
-  "summary": string
+  "ats_score": 0-100,
+  "strengths": [],
+  "weaknesses": [],
+  "missing_skills": [],
+  "summary": ""
 }}
 
-Resume Text:
+Resume text:
 {text}
 """
 
-    response = model.generate_content(prompt)
-    raw_output = response.text.strip()
+        # 3. Gemini call
+        response = model.generate_content(prompt)
 
-    # 3. Convert Gemini output to JSON
-    try:
-        analysis = json.loads(raw_output)
-    except Exception:
+        # 4. SAFE response extract
+        if not response or not response.candidates:
+            raise Exception("Empty response from Gemini")
+
+        result_text = response.candidates[0].content.parts[0].text
+
         return JSONResponse(
-            status_code=500,
             content={
-                "error": "AI response not valid JSON",
-                "raw_output": raw_output
+                "status": "OK",
+                "analysis": result_text
             }
         )
 
-    # 4. Final response
-    return JSONResponse(
-        content={
-            "message": "Resume analyzed successfully",
-            "analysis": analysis
-        }
-    )
-
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "ERROR",
+                "message": str(e)
+            }
+        )
