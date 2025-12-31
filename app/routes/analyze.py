@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File
+from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
 
 router = APIRouter(
@@ -13,18 +13,24 @@ router = APIRouter(
 def analyze_test():
     return {"message": "Analyze route is working"}
 
-
 # -------------------------
-# UPLOAD ROUTE (POST)
-# PHASE 1 – MOCK RESPONSE
+# UPLOAD & ANALYZE (POST)
 # -------------------------
 @router.post("/")
 async def analyze_resume(resume: UploadFile = File(...)):
+
+    # 1. Validate file type
+    if resume.content_type != "application/pdf":
+        raise HTTPException(
+            status_code=400,
+            detail="Only PDF files are allowed"
+        )
+
+    # 2. (Phase 2) Just confirm upload – no AI yet
     return JSONResponse(
         content={
             "message": "Resume uploaded successfully",
             "filename": resume.filename,
-            "content_type": resume.content_type,
             "status": "OK"
         }
     )
