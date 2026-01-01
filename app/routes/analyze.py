@@ -2,11 +2,13 @@ from fastapi import APIRouter, UploadFile, File
 from fastapi.responses import JSONResponse
 import pdfplumber
 import google.generativeai as genai
-import os, json, uuid, time, random
+import os
+import json
+import uuid
 
 router = APIRouter(prefix="/analyze", tags=["Analyze"])
 
-# 🔑 Gemini config
+# Gemini API config
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 
@@ -15,7 +17,7 @@ def call_gemini(prompt: str) -> str:
     response = model.generate_content(
         prompt,
         generation_config={
-            "temperature": 0.7,       # variation (no same result)
+            "temperature": 0.7,
             "max_output_tokens": 600
         }
     )
@@ -25,11 +27,11 @@ def call_gemini(prompt: str) -> str:
 @router.post("/")
 async def analyze_resume(resume: UploadFile = File(...)):
     try:
-        # 🟢 STEP 1: Read PDF (limit pages)
+        # 1️⃣ Read PDF safely (max 2 pages)
         text = ""
         with pdfplumber.open(resume.file) as pdf:
             for i, page in enumerate(pdf.pages):
-                if i >= 2:   # max 2 pages only
+                if i >= 2:
                     break
                 page_text = page.extract_text()
                 if page_text:
@@ -38,13 +40,10 @@ async def analyze_resume(resume: UploadFile = File(...)):
         if not text.strip():
             return JSONResponse(
                 status_code=400,
-                content={"error": "Unable to extract text from PDF"}
+                content={"error": "Could not extract text from PDF"}
             )
 
-        # 🧪 DEBUG (optional)
-        print("Resume length:", len(text))
-
-        # 🟢 STEP 2: STRONG PROMPT (no same % issue)
+        # 2️⃣ Prompt
         prompt = f"""
 You are an expert ATS resume analyzer.
 
@@ -53,11 +52,11 @@ Analyze the resume below carefully.
 Resume Text:
 {text}
 
-IMPORTANT RULES:
-- Score must be realistic between 35 and 95
-- Each resume MUST produce different score
-- Strengths and weaknesses must depend on resume content
-- Do NOT repeat same generic points
+RULES:
+- Score must be between 35 and 95
+- Each resume MUST have different score
+- Strengths & weaknesses must depend on resume content
+- Do NOT repeat generic points
 
 Return STRICT JSON only in this format:
 
@@ -68,15 +67,27 @@ Return STRICT JSON only in this format:
 }}
 """
 
-        # 🟢 STEP 3: Call Gemini
+        # 3️⃣ Call Gemini
         raw_response = call_gemini(prompt)
 
-        # 🟢 STEP 4: Parse JSON safely
-                try:
+        # 4️⃣ Parse JSON safely
+        try:
             analysis = json.loads(raw_response)
-        except Exception as e:
+        except Exception:
             analysis = {
-                "skill_score": int(len(text) % 60) + 35,
+                "skill_score": (len(text) % 60) + 35,
                 "strengths": ["Relevant technical exposure"],
                 "weaknesses": ["Resume formatting can be improved"]
             }
+
+        # 5️⃣ Return response
+        return JSONResponse(content={
+            "id": str(uuid.uuid4()),
+            "analysis": analysis
+        })
+
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)}
+        )
