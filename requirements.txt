@@ -1,6 +1,7 @@
-flask
-flask-cors
+fastapi
+uvicorn
 gunicorn
+python-multipart
 pdfplumber
 pypdf
 python-docx
