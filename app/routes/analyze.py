@@ -1,33 +1,59 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
+from fastapi import APIRouter, UploadFile, File
+from fastapi.responses import JSONResponse
+import pdfplumber
+import docx
+import io
 
-app = Flask(__name__)
-CORS(app)
+router = APIRouter()
 
-@app.route("/analyze", methods=["POST"])
-def analyze():
+
+def extract_text_from_pdf(file_bytes: bytes) -> str:
+    text = ""
+    with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+        for page in pdf.pages:
+            text += page.extract_text() or ""
+    return text
+
+
+def extract_text_from_docx(file_bytes: bytes) -> str:
+    doc = docx.Document(io.BytesIO(file_bytes))
+    return "\n".join([para.text for para in doc.paragraphs])
+
+
+@router.post("/analyze")
+async def analyze_resume(file: UploadFile = File(...)):
     try:
-        if "resume" not in request.files:
-            return jsonify({"error": "No file uploaded"}), 400
+        file_bytes = await file.read()
 
-        file = request.files["resume"]
+        if file.filename.endswith(".pdf"):
+            text = extract_text_from_pdf(file_bytes)
+        elif file.filename.endswith(".docx"):
+            text = extract_text_from_docx(file_bytes)
+        else:
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "message": "Only PDF or DOCX allowed"}
+            )
 
-        if file.filename == "":
-            return jsonify({"error": "Empty file"}), 400
+        # 🔹 SIMPLE DEMO ANALYSIS (abhi)
+        word_count = len(text.split())
+        score = min(100, max(30, word_count // 10))
 
-        if not file.filename.lower().endswith(".pdf"):
-            return jsonify({"error": "Only PDF allowed"}), 400
+        skills = []
+        keywords = ["python", "java", "flask", "fastapi", "machine learning", "ai"]
+        for k in keywords:
+            if k.lower() in text.lower():
+                skills.append(k)
 
-        # TEMP STATIC RESULT (IMPORTANT)
-        return jsonify({
-            "score": 82,
-            "skills": ["Python", "AI", "Data Analysis"],
-            "missing_skills": ["Docker", "System Design"],
-            "summary": "Good resume. Add more projects."
-        })
+        return {
+            "success": True,
+            "score": score,
+            "skills": skills,
+            "words": word_count
+        }
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-if __name__ == "__main__":
-    app.run()
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "error": str(e)}
+        )
