@@ -1,6 +1,5 @@
 fastapi
 uvicorn
-gunicorn
 python-multipart
 pdfplumber
 pypdf
