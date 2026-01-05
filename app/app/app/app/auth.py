@@ -1,9 +1,14 @@
 # app/app/auth.py
 from flask import Blueprint, request, session, jsonify
-from app.models import create_user, get_user
+
+# 🔥 IMPORTANT: correct import
+from app.app.models import create_user, get_user
 
 auth_bp = Blueprint("auth", __name__)
 
+# ------------------------------
+# GOOGLE LOGIN (SIMULATED)
+# ------------------------------
 @auth_bp.route("/auth/google", methods=["POST"])
 def google_login():
     data = request.json
@@ -21,6 +26,9 @@ def google_login():
         "email": email
     }
 
+# ------------------------------
+# CHECK LOGIN STATUS
+# ------------------------------
 @auth_bp.route("/auth/me", methods=["GET"])
 def me():
     email = session.get("user")
